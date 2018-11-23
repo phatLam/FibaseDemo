@@ -5,6 +5,7 @@ import android.content.SharedPreferences;
 import android.net.Uri;
 import android.preference.PreferenceManager;
 import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
@@ -35,15 +36,19 @@ import com.google.android.gms.auth.api.Auth;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.dynamic.IFragmentWrapper;
+import com.google.android.gms.tasks.Continuation;
 import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.gms.tasks.Task;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
 import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.UploadTask;
 
 import de.hdodenhof.circleimageview.CircleImageView;
 
@@ -128,9 +133,11 @@ public class MainActivity extends AppCompatActivity
             @NonNull
             @Override
             public FriendlyMessage parseSnapshot(@NonNull DataSnapshot snapshot) {
+
                 FriendlyMessage friendlyMessage = snapshot.getValue(FriendlyMessage.class);
                 if (friendlyMessage != null)
                     friendlyMessage.setId(snapshot.getKey());
+                Log.d(TAG, "parse Snapshot=" + friendlyMessage.toString());
                 return friendlyMessage;
             }
         };
@@ -142,8 +149,8 @@ public class MainActivity extends AppCompatActivity
             @Override
             protected void onBindViewHolder(@NonNull final MessageViewHolder holder, int position, @NonNull FriendlyMessage model) {
                 mProgressBar.setVisibility(ProgressBar.INVISIBLE);
-                if (model.getText() != null){
-                    holder.messageTextView.setText(model.getText());
+                if (model.getAddress() != null){
+                    holder.messageTextView.setText(model.getAddress());
                     holder.messageTextView.setVisibility(TextView.VISIBLE);
                     holder.messageImageView.setVisibility(ImageView.GONE);
                 }else if (model.getImageUrl() != null){
@@ -236,7 +243,10 @@ public class MainActivity extends AppCompatActivity
         mSendButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                // Send messages on click.
+                // endSend messages on click.
+                FriendlyMessage message = new FriendlyMessage(mMessageEditText.getText().toString(), mUsername, mPhotoUrl, null /*no image*/ );
+                mFirebaseDatabaseReference.child(MESSAGES_CHILD).push().setValue(message);
+                mMessageEditText.setText("");
 
             }
         });
@@ -246,9 +256,14 @@ public class MainActivity extends AppCompatActivity
             @Override
             public void onClick(View view) {
                 // Select image for image message on click.
+                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                intent.setType("image/*");
+                startActivityForResult(intent, REQUEST_IMAGE);
             }
         });
     }
+
 
     @Override
     public void onStart() {
@@ -260,11 +275,13 @@ public class MainActivity extends AppCompatActivity
     @Override
     public void onPause() {
         super.onPause();
+        mFirebaseAdapter.stopListening();
     }
 
     @Override
     public void onResume() {
         super.onResume();
+        mFirebaseAdapter.startListening();
     }
 //
     @Override
@@ -301,6 +318,71 @@ public class MainActivity extends AppCompatActivity
         // be available.
         Log.d(TAG, "onConnectionFailed:" + connectionResult);
         Toast.makeText(this, "Google Play Services error.", Toast.LENGTH_SHORT).show();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        Log.d(TAG, "onActivityResult: requestCode=" + requestCode + ", resultCode=" + resultCode);
+        if (requestCode == REQUEST_IMAGE){
+            if (resultCode == RESULT_OK){
+                if (data != null){
+                    final Uri uri = data.getData();
+                    Log.d(TAG, "uri = " + uri.toString());
+                    FriendlyMessage tempMessage = new FriendlyMessage(null, mUsername, mPhotoUrl,
+                            LOADING_IMAGE_URL);
+                    mFirebaseDatabaseReference.child(MESSAGES_CHILD).push().setValue(tempMessage, new DatabaseReference.CompletionListener() {
+                        @Override
+                        public void onComplete(@Nullable DatabaseError databaseError, @NonNull DatabaseReference databaseReference) {
+                            if (databaseError == null){
+                                String key = databaseReference.getKey();
+                                StorageReference reference = FirebaseStorage.getInstance()
+                                        .getReference(mFirebaseUser.getUid()).child(key).child(uri.getLastPathSegment());
+                                pushImageInStorage(reference, uri, key);
+                            }else {
+                                Log.w(TAG, "Unable to write message to database.",
+                                        databaseError.toException());
+                            }
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    private void pushImageInStorage(final StorageReference reference, Uri uri, final String key){
+
+        reference.putFile(uri).continueWithTask(new Continuation<UploadTask.TaskSnapshot, Task<Uri>>() {
+            @Override
+            public Task<Uri> then(@NonNull Task<UploadTask.TaskSnapshot> task) throws Exception {
+                if (!task.isSuccessful()) {
+                    throw task.getException();
+                }
+                return reference.getDownloadUrl();
+            }
+        }).addOnCompleteListener(new OnCompleteListener<Uri>() {
+            @Override
+            public void onComplete(@NonNull Task<Uri> task) {
+                if (task.isSuccessful()){
+                    Uri downloadUri = task.getResult();
+                    FriendlyMessage message = new FriendlyMessage(null, mUsername, mPhotoUrl,
+                            downloadUri.toString());
+                    Log.d(TAG, "onComplete image url = " + message.getImageUrl());
+                    mFirebaseDatabaseReference.child(MESSAGES_CHILD).child(key).setValue(message);
+                }
+            }
+        });
+//                .addOnCompleteListener(this, new OnCompleteListener<UploadTask.TaskSnapshot>() {
+//            @Override
+//            public void onComplete(@NonNull Task<UploadTask.TaskSnapshot> task) {
+//                if (task.isSuccessful()){
+//                    FriendlyMessage message = new FriendlyMessage(null, mUsername, mPhotoUrl,
+//                            task.getResult().getMetadata()..toString());
+//                    Log.d(TAG, "onComplete image url = " + message.getImageUrl());
+//                    mFirebaseDatabaseReference.child(MESSAGES_CHILD).child(key).setValue(message);
+//                }
+//            }
+//        });
     }
 }
 

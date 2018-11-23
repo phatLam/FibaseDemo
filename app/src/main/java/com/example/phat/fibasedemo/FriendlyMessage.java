@@ -15,10 +15,11 @@
  */
 package com.example.phat.fibasedemo;
 
+
 public class FriendlyMessage {
 
     private String id;
-    private String text;
+    private String address;
     private String name;
     private String photoUrl;
     private String imageUrl;
@@ -27,7 +28,7 @@ public class FriendlyMessage {
     }
 
     public FriendlyMessage(String text, String name, String photoUrl, String imageUrl) {
-        this.text = text;
+        this.address = text;
         this.name = name;
         this.photoUrl = photoUrl;
         this.imageUrl = imageUrl;
@@ -41,8 +42,8 @@ public class FriendlyMessage {
         this.id = id;
     }
 
-    public void setText(String text) {
-        this.text = text;
+    public void setAddress(String text) {
+        this.address = text;
     }
 
     public String getName() {
@@ -57,8 +58,8 @@ public class FriendlyMessage {
         return photoUrl;
     }
 
-    public String getText() {
-        return text;
+    public String getAddress() {
+        return address;
     }
 
     public void setPhotoUrl(String photoUrl) {
@@ -71,5 +72,10 @@ public class FriendlyMessage {
 
     public void setImageUrl(String imageUrl) {
         this.imageUrl = imageUrl;
+    }
+
+    @Override
+    public String toString() {
+        return address +", " + name +", photo = " + imageUrl;
     }
 }
